@@ -1,98 +1,141 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
+import { router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { LoginForm, type LoginFormValues } from '@/components/login/login-form';
+import { Brand, LoginLayout } from '@/constants/brand';
+import { loginRequest } from '@/services/auth';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
+export default function LoginScreen() {
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (values: LoginFormValues) => {
+    setLoading(true);
+    try {
+      await loginRequest(values);
+      // Successful auth will navigate into the app once the API is connected.
+      router.replace('/dashboard');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+    <View style={styles.root}>
+      <StatusBar style="dark" />
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}>
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
+            bounces={false}>
+            <View style={styles.content}>
+              <View style={styles.header} accessibilityRole="header">
+                <Image
+                  source={require('@/assets/images/chessvanguard.png')}
+                  style={styles.logo}
+                  contentFit="contain"
+                  accessibilityLabel="ChessVanguard"
+                />
+                <Text style={styles.subtitle}>Welcome back – sign in to continue</Text>
+              </View>
 
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+              <LoginForm
+                loading={loading}
+                onSubmit={handleSubmit}
+                onForgotPassword={() => router.push('/forgot-password')}
+                onRegisterStudent={() => router.push('/register')}
+                onJoinCoach={() => router.push('/join-coach')}
+              />
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
+              {__DEV__ ? (
+                <View style={styles.devLinks}>
+                  <Text
+                    onPress={() => router.push('/dashboard')}
+                    style={styles.devLink}
+                    accessibilityRole="link">
+                    Preview student dashboard
+                  </Text>
+                  <Text
+                    onPress={() => router.push('/coach/dashboard')}
+                    style={styles.devLink}
+                    accessibilityRole="link">
+                    Preview coach dashboard
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
+    backgroundColor: Brand.page,
   },
   safeArea: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
   },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  flex: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
   },
-  title: {
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: LoginLayout.horizontalPadding,
+    paddingVertical: 24,
+  },
+  devLinks: {
+    gap: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  content: {
+    width: '100%',
+    maxWidth: LoginLayout.maxCardWidth,
+    alignSelf: 'center',
+    alignItems: 'center',
+    gap: 20,
+  },
+  header: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 10,
+  },
+  logo: {
+    width: 224,
+    height: LoginLayout.logoHeight,
+  },
+  subtitle: {
+    color: Brand.subtitle,
+    fontSize: 14,
+    fontWeight: '500',
     textAlign: 'center',
   },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  devLink: {
+    marginTop: 4,
+    color: Brand.gold,
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });
