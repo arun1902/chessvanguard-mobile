@@ -1,16 +1,15 @@
 import { SymbolView } from 'expo-symbols';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Brand } from '@/constants/brand';
+import type { NotificationListItem } from '@/hooks/use-notifications';
 
-export type NotificationItem = {
-  id: string;
-  title: string;
-  body: string;
-  timeAgo: string;
+type NotificationsListProps = {
+  items: NotificationListItem[];
+  onPressItem?: (item: NotificationListItem) => void;
 };
 
-export function NotificationsList({ items }: { items: NotificationItem[] }) {
+export function NotificationsList({ items, onPressItem }: NotificationsListProps) {
   if (items.length === 0) {
     return (
       <View style={styles.empty}>
@@ -22,10 +21,17 @@ export function NotificationsList({ items }: { items: NotificationItem[] }) {
   return (
     <View style={styles.list}>
       {items.map((item, index) => (
-        <View
+        <Pressable
           key={item.id}
-          style={[styles.item, index < items.length - 1 ? styles.itemBorder : null]}>
-          <View style={styles.iconWrap}>
+          onPress={() => onPressItem?.(item)}
+          style={[
+            styles.item,
+            item.unread ? styles.itemUnread : null,
+            index < items.length - 1 ? styles.itemBorder : null,
+          ]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: item.unread }}>
+          <View style={[styles.iconWrap, item.unread ? styles.iconUnread : null]}>
             <SymbolView
               name={{ ios: 'calendar', android: 'calendar_month', web: 'calendar_month' }}
               size={18}
@@ -33,11 +39,14 @@ export function NotificationsList({ items }: { items: NotificationItem[] }) {
             />
           </View>
           <View style={styles.copy}>
-            <Text style={styles.itemTitle}>{item.title}</Text>
+            <View style={styles.titleRow}>
+              <Text style={styles.itemTitle}>{item.title}</Text>
+              {item.unread ? <View style={styles.dot} /> : null}
+            </View>
             <Text style={styles.itemBody}>{item.body}</Text>
             <Text style={styles.itemTime}>{item.timeAgo}</Text>
           </View>
-        </View>
+        </Pressable>
       ))}
     </View>
   );
@@ -57,6 +66,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
   },
+  itemUnread: {
+    backgroundColor: '#FFFBEB',
+  },
   itemBorder: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Brand.border,
@@ -69,14 +81,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconUnread: {
+    backgroundColor: '#A7F3D0',
+  },
   copy: {
     flex: 1,
     gap: 4,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   itemTitle: {
+    flex: 1,
     color: Brand.navy,
     fontSize: 14,
     fontWeight: '800',
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Brand.gold,
   },
   itemBody: {
     color: Brand.subtitle,

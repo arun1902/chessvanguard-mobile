@@ -16,5 +16,10 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "chessvanguard_v2",
+    "chessvanguard_v2_backend"
   ]
 }

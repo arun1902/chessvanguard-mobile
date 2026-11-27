@@ -4,7 +4,8 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Brand } from '@/constants/brand';
-import { DEMO_COACH_USER } from '@/constants/coach';
+import { useAuth } from '@/features/auth/session';
+import { initialsFromName } from '@/utils/format';
 
 type CoachProfileMenuProps = {
   visible: boolean;
@@ -12,6 +13,11 @@ type CoachProfileMenuProps = {
 };
 
 export function CoachProfileMenu({ visible, onClose }: CoachProfileMenuProps) {
+  const { user, logout } = useAuth();
+  const displayName = user?.name?.trim() || 'Coach';
+  const emailLocal = user?.email?.trim().split('@')[0] || '';
+  const initials = initialsFromName(user?.name?.trim() || emailLocal, 'C');
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -21,10 +27,10 @@ export function CoachProfileMenu({ visible, onClose }: CoachProfileMenuProps) {
 
           <View style={styles.identity}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>C</Text>
+              <Text style={styles.avatarText}>{initials}</Text>
             </View>
             <View style={styles.identityCopy}>
-              <Text style={styles.name}>{DEMO_COACH_USER.name}</Text>
+              <Text style={styles.name}>{displayName}</Text>
               <Text style={styles.role}>Coach</Text>
             </View>
           </View>
@@ -53,8 +59,9 @@ export function CoachProfileMenu({ visible, onClose }: CoachProfileMenuProps) {
           </Pressable>
 
           <Pressable
-            onPress={() => {
+            onPress={async () => {
               onClose();
+              await logout();
               router.replace('/');
             }}
             style={[styles.row, styles.logoutRow]}

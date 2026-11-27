@@ -4,7 +4,8 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Brand } from '@/constants/brand';
-import { DEMO_STUDENT } from '@/constants/dashboard';
+import { useAuth } from '@/features/auth/session';
+import { initialsFromName } from '@/utils/format';
 
 type StudentProfileMenuProps = {
   visible: boolean;
@@ -12,12 +13,9 @@ type StudentProfileMenuProps = {
 };
 
 export function StudentProfileMenu({ visible, onClose }: StudentProfileMenuProps) {
-  const initials = DEMO_STUDENT.name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+  const { user, logout } = useAuth();
+  const displayName = user?.name?.trim() || 'Student';
+  const initials = initialsFromName(displayName, 'S');
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -31,7 +29,7 @@ export function StudentProfileMenu({ visible, onClose }: StudentProfileMenuProps
               <Text style={styles.avatarText}>{initials}</Text>
             </View>
             <View style={styles.identityCopy}>
-              <Text style={styles.name}>{DEMO_STUDENT.name}</Text>
+              <Text style={styles.name}>{displayName}</Text>
               <Text style={styles.role}>Student</Text>
             </View>
           </View>
@@ -60,8 +58,9 @@ export function StudentProfileMenu({ visible, onClose }: StudentProfileMenuProps
           </Pressable>
 
           <Pressable
-            onPress={() => {
+            onPress={async () => {
               onClose();
+              await logout();
               router.replace('/');
             }}
             style={[styles.row, styles.logoutRow]}

@@ -1,8 +1,9 @@
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -13,20 +14,52 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LoginForm, type LoginFormValues } from '@/components/login/login-form';
+import { useToast } from '@/components/ui/app-toast';
 import { Brand, LoginLayout } from '@/constants/brand';
-import { loginRequest } from '@/services/auth';
+import { ApiError } from '@/features/auth/types';
+import { getHomeHrefForRole, useAuth } from '@/features/auth/session';
+import { welcomeBackMessage } from '@/utils/auth-messages';
 
 export default function LoginScreen() {
-  const [loading, setLoading] = useState(false);
+  const { login, logout, isLoading, isAuthenticated, user } = useAuth();
+  const { showSuccess } = useToast();
+  const [submitting, setSubmitting] = useState(false);
+
+  if (isLoading) {
+    return (
+      <View style={styles.loading}>
+        <StatusBar style="dark" />
+        <ActivityIndicator size="large" color={Brand.gold} />
+      </View>
+    );
+  }
+
+  if (isAuthenticated && user) {
+    const home = getHomeHrefForRole(user.role);
+    if (home) return <Redirect href={home} />;
+  }
 
   const handleSubmit = async (values: LoginFormValues) => {
-    setLoading(true);
+    if (submitting) return;
+    setSubmitting(true);
     try {
-      await loginRequest(values);
-      // Successful auth will navigate into the app once the API is connected.
-      router.replace('/dashboard');
+      const session = await login(values);
+      const home = getHomeHrefForRole(session.user.role);
+      if (!home) {
+        await logout();
+        throw new Error(
+          'This account role is not supported in the mobile app. Please use the web portal.',
+        );
+      }
+      showSuccess(welcomeBackMessage(session.user));
+      router.replace(home);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw new Error(error.message);
+      }
+      throw error;
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
@@ -56,29 +89,12 @@ export default function LoginScreen() {
               </View>
 
               <LoginForm
-                loading={loading}
+                loading={submitting}
                 onSubmit={handleSubmit}
                 onForgotPassword={() => router.push('/forgot-password')}
                 onRegisterStudent={() => router.push('/register')}
                 onJoinCoach={() => router.push('/join-coach')}
               />
-
-              {__DEV__ ? (
-                <View style={styles.devLinks}>
-                  <Text
-                    onPress={() => router.push('/dashboard')}
-                    style={styles.devLink}
-                    accessibilityRole="link">
-                    Preview student dashboard
-                  </Text>
-                  <Text
-                    onPress={() => router.push('/coach/dashboard')}
-                    style={styles.devLink}
-                    accessibilityRole="link">
-                    Preview coach dashboard
-                  </Text>
-                </View>
-              ) : null}
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -92,6 +108,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Brand.page,
   },
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Brand.page,
+  },
   safeArea: {
     flex: 1,
   },
@@ -103,11 +125,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: LoginLayout.horizontalPadding,
     paddingVertical: 24,
-  },
-  devLinks: {
-    gap: 8,
-    alignItems: 'center',
-    marginTop: 8,
   },
   content: {
     width: '100%',
@@ -129,13 +146,6 @@ const styles = StyleSheet.create({
     color: Brand.subtitle,
     fontSize: 14,
     fontWeight: '500',
-    textAlign: 'center',
-  },
-  devLink: {
-    marginTop: 4,
-    color: Brand.gold,
-    fontSize: 13,
-    fontWeight: '600',
     textAlign: 'center',
   },
 });

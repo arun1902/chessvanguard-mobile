@@ -1,9 +1,18 @@
 import { SymbolView } from 'expo-symbols';
-import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Brand } from '@/constants/brand';
+import { api, ApiError, type CoachTimingSlot } from '@/services/api';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Su'] as const;
 const MONTHS = [
@@ -23,202 +32,378 @@ const MONTHS = [
 
 type BookDemoModalProps = {
   visible: boolean;
+  coachId: string;
   coachName: string;
   priceLabel: string;
+  studentId: string;
   onClose: () => void;
-  onBook?: (date: Date, time?: string) => void;
+  onBooked: (result: {
+    requiresPayment: boolean;
+    amount?: number;
+    holdId?: string;
+    payments_session_id?: string;
+    holdExpiresAt?: string;
+    scheduledDate: string;
+    time: string;
+  }) => void;
 };
 
 export function BookDemoModal({
   visible,
+  coachId,
   coachName,
   priceLabel,
+  studentId,
   onClose,
-  onBook,
+  onBooked,
 }: BookDemoModalProps) {
   const today = useMemo(() => startOfDay(new Date()), []);
   const [cursor, setCursor] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [selected, setSelected] = useState<Date>(today);
-  const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [availableDays, setAvailableDays] = useState<string[]>([]);
+  const [slots, setSlots] = useState<CoachTimingSlot[]>([]);
+  const [loadingDays, setLoadingDays] = useState(false);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const days = useMemo(() => buildCalendarDays(cursor), [cursor]);
-  const slots = useMemo(() => getSlotsForDate(selected), [selected]);
-  const canBook = Boolean(selected && selectedTime);
+  const selectedSlot = slots.find((slot) => slot.id === selectedSlotId) ?? null;
+  const canBook = Boolean(selected && selectedSlotId && !submitting);
+
+  useEffect(() => {
+    if (!visible || !coachId) return;
+
+    let cancelled = false;
+    (async () => {
+      setLoadingDays(true);
+      setError(null);
+      try {
+        const response = await api.coaches.getTimings(coachId, { date: formatDate(today), type: 'Demo' });
+        if (!cancelled) setAvailableDays((response.availableDays || []).map((d) => d.toLowerCase()));
+      } catch (err) {
+        if (!cancelled) {
+          setAvailableDays([]);
+          setError(err instanceof ApiError ? err.message : 'Failed to load available days.');
+        }
+      } finally {
+        if (!cancelled) setLoadingDays(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, coachId, today]);
+
+  useEffect(() => {
+    if (!visible || !coachId || !selected) return;
+
+    const dayName = WEEKDAY_NAMES[selected.getDay()];
+    if (availableDays.length > 0 && !availableDays.includes(dayName)) {
+      setSlots([]);
+      setSelectedSlotId(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setLoadingSlots(true);
+      setError(null);
+      setSelectedSlotId(null);
+      try {
+        const response = await api.coaches.getTimings(coachId, { date: formatDate(selected), type: 'Demo' });
+        if (!cancelled) setSlots(response.slots || []);
+      } catch (err) {
+        if (!cancelled) {
+          setSlots([]);
+          setError(err instanceof ApiError ? err.message : 'Failed to load time slots.');
+        }
+      } finally {
+        if (!cancelled) setLoadingSlots(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, coachId, selected, availableDays]);
+
+  const handleBook = async () => {
+    if (!selected || !selectedSlotId || !selectedSlot || submitting) return;
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const scheduledDate = formatDate(selected);
+      const result = await api.students.bookClass(studentId, {
+        coachId,
+        timingId: selectedSlotId,
+        scheduledDate,
+        classType: 'Demo',
+      });
+
+      const requiresPayment = Boolean(
+        result && typeof result === 'object' && 'requiresPayment' in result && result.requiresPayment,
+      );
+
+      if (requiresPayment) {
+        const paid = result as Extract<typeof result, { requiresPayment: true }>;
+        if (!paid.payments_session_id || !paid.holdId) {
+          setError('Payment session is unavailable. Please try again.');
+          return;
+        }
+        const amount = Number(paid.amount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+          setError('Payment amount is unavailable. Please try again.');
+          return;
+        }
+        onBooked({
+          requiresPayment: true,
+          amount,
+          holdId: paid.holdId,
+          payments_session_id: paid.payments_session_id,
+          holdExpiresAt: paid.holdExpiresAt,
+          scheduledDate,
+          time: formatDisplayTime(selectedSlot.time),
+        });
+        onClose();
+        return;
+      }
+
+      onBooked({
+        requiresPayment: false,
+        scheduledDate,
+        time: formatDisplayTime(selectedSlot.time),
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to book demo. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <SafeAreaView style={styles.safe} edges={['bottom']}>
-          <View style={styles.card}>
-            <View style={styles.header}>
-              <View style={styles.headerCopy}>
-                <Text style={styles.title}>Book Demo Session</Text>
-                <Text style={styles.subtitle}>
-                  Schedule a demo session with {coachName} • {priceLabel.replace(' demo class', '')}
-                </Text>
-              </View>
-              <Pressable
-                onPress={onClose}
-                style={styles.closeButton}
-                accessibilityRole="button"
-                accessibilityLabel="Close">
-                <SymbolView
-                  name={{ ios: 'xmark', android: 'close', web: 'close' }}
-                  size={16}
-                  tintColor={Brand.navy}
-                />
-              </Pressable>
+      <View style={styles.overlay}>
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" />
+        <SafeAreaView style={styles.sheet} edges={['bottom']}>
+          <View style={styles.handle} />
+          <View style={styles.header}>
+            <View style={styles.headerCopy}>
+              <Text style={styles.title}>Book Demo Session</Text>
+              <Text style={styles.subtitle}>
+                Schedule a demo session with {coachName} • {priceLabel.replace(' demo class', '')}
+              </Text>
             </View>
+            <Pressable
+              onPress={onClose}
+              style={styles.closeButton}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              hitSlop={8}>
+              <SymbolView
+                name={{ ios: 'xmark', android: 'close', web: 'close' }}
+                size={16}
+                tintColor={Brand.navy}
+              />
+            </Pressable>
+          </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Select Date</Text>
-                <View style={styles.calendar}>
-                  <View style={styles.monthRow}>
-                    <Text style={styles.monthLabel}>
-                      {MONTHS[cursor.getMonth()]} {cursor.getFullYear()}
-                    </Text>
-                    <View style={styles.monthNav}>
-                      <Pressable
-                        onPress={() => setCursor(addMonths(cursor, -1))}
-                        style={styles.navButton}
-                        accessibilityRole="button"
-                        accessibilityLabel="Previous month">
-                        <SymbolView
-                          name={{ ios: 'chevron.left', android: 'chevron_left', web: 'chevron_left' }}
-                          size={16}
-                          tintColor={Brand.navy}
-                        />
-                      </Pressable>
-                      <Pressable
-                        onPress={() => setCursor(addMonths(cursor, 1))}
-                        style={styles.navButton}
-                        accessibilityRole="button"
-                        accessibilityLabel="Next month">
-                        <SymbolView
-                          name={{
-                            ios: 'chevron.right',
-                            android: 'chevron_right',
-                            web: 'chevron_right',
-                          }}
-                          size={16}
-                          tintColor={Brand.navy}
-                        />
-                      </Pressable>
-                    </View>
+          <ScrollView
+            style={styles.bodyScroll}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.body}
+            keyboardShouldPersistTaps="handled">
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Select Date</Text>
+              <View style={styles.calendar}>
+                <View style={styles.monthRow}>
+                  <Text style={styles.monthLabel}>
+                    {MONTHS[cursor.getMonth()]} {cursor.getFullYear()}
+                  </Text>
+                  <View style={styles.monthNav}>
+                    <Pressable
+                      onPress={() => setCursor(addMonths(cursor, -1))}
+                      style={styles.navButton}
+                      accessibilityRole="button"
+                      accessibilityLabel="Previous month">
+                      <SymbolView
+                        name={{ ios: 'chevron.left', android: 'chevron_left', web: 'chevron_left' }}
+                        size={16}
+                        tintColor={Brand.navy}
+                      />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setCursor(addMonths(cursor, 1))}
+                      style={styles.navButton}
+                      accessibilityRole="button"
+                      accessibilityLabel="Next month">
+                      <SymbolView
+                        name={{
+                          ios: 'chevron.right',
+                          android: 'chevron_right',
+                          web: 'chevron_right',
+                        }}
+                        size={16}
+                        tintColor={Brand.navy}
+                      />
+                    </Pressable>
                   </View>
+                </View>
 
-                  <View style={styles.weekRow}>
-                    {WEEKDAYS.map((day) => (
-                      <Text key={day} style={styles.weekday}>
-                        {day}
-                      </Text>
+                <View style={styles.weekRow}>
+                  {WEEKDAYS.map((day) => (
+                    <Text key={day} style={styles.weekday}>
+                      {day}
+                    </Text>
+                  ))}
+                </View>
+
+                {loadingDays ? (
+                  <ActivityIndicator color={Brand.gold} style={styles.loader} />
+                ) : (
+                  <View style={styles.grid}>
+                    {chunkWeeks(days).map((week, weekIndex) => (
+                      <View key={`week-${weekIndex}`} style={styles.weekGridRow}>
+                        {week.map((day, dayIndex) => {
+                          if (!day) {
+                            return (
+                              <View
+                                key={`empty-${weekIndex}-${dayIndex}`}
+                                style={styles.dayCellEmpty}
+                              />
+                            );
+                          }
+                          const isSelected = sameDay(day, selected);
+                          const isToday = sameDay(day, today);
+                          const enabled =
+                            availableDays.length === 0
+                              ? day >= today
+                              : availableDays.includes(WEEKDAY_NAMES[day.getDay()]) &&
+                                day >= today;
+                          return (
+                            <Pressable
+                              key={formatDate(day)}
+                              disabled={!enabled}
+                              onPress={() => {
+                                setSelected(day);
+                                setSelectedSlotId(null);
+                              }}
+                              style={styles.dayCell}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: isSelected, disabled: !enabled }}>
+                              <View
+                                style={[
+                                  styles.dayInner,
+                                  isSelected ? styles.daySelected : null,
+                                  isToday && !isSelected ? styles.dayToday : null,
+                                  !enabled ? styles.dayDisabled : null,
+                                ]}>
+                                <Text
+                                  style={[
+                                    styles.dayText,
+                                    isSelected ? styles.dayTextSelected : null,
+                                    isToday && !isSelected ? styles.dayTextToday : null,
+                                    !enabled ? styles.dayTextDisabled : null,
+                                  ]}>
+                                  {day.getDate()}
+                                </Text>
+                              </View>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
                     ))}
                   </View>
+                )}
 
-                  <View style={styles.grid}>
-                    {days.map((day, index) => {
-                      if (!day) {
-                        return <View key={`empty-${index}`} style={styles.dayCell} />;
-                      }
-                      const isSelected = sameDay(day, selected);
-                      const isToday = sameDay(day, today);
-                      return (
-                        <Pressable
-                          key={day.toISOString()}
-                          onPress={() => {
-                            setSelected(day);
-                            setSelectedTime(null);
-                          }}
-                          style={[
-                            styles.dayCell,
-                            isSelected ? styles.daySelected : null,
-                            isToday && !isSelected ? styles.dayToday : null,
-                          ]}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: isSelected }}>
-                          <Text
-                            style={[
-                              styles.dayText,
-                              isSelected ? styles.dayTextSelected : null,
-                              isToday && !isSelected ? styles.dayTextToday : null,
-                            ]}>
-                            {day.getDate()}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
+                <View style={styles.legend}>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendSwatch, styles.legendToday]} />
+                    <Text style={styles.legendText}>Today</Text>
                   </View>
-
-                  <View style={styles.legend}>
-                    <View style={styles.legendItem}>
-                      <View style={[styles.legendSwatch, styles.legendToday]} />
-                      <Text style={styles.legendText}>Today</Text>
-                    </View>
-                    <View style={styles.legendItem}>
-                      <View style={[styles.legendSwatch, styles.legendSelected]} />
-                      <Text style={styles.legendText}>Selected</Text>
-                    </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendSwatch, styles.legendSelected]} />
+                    <Text style={styles.legendText}>Selected</Text>
                   </View>
                 </View>
               </View>
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Select Time</Text>
-                {slots.length === 0 ? (
-                  <View style={styles.noSlots}>
-                    <Text style={styles.noSlotsText}>No slots for this date</Text>
-                  </View>
-                ) : (
-                  <View style={styles.slots}>
-                    {slots.map((slot) => {
-                      const active = slot === selectedTime;
-                      return (
-                        <Pressable
-                          key={slot}
-                          onPress={() => setSelectedTime(slot)}
-                          style={[styles.slot, active ? styles.slotActive : null]}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: active }}>
-                          <Text style={[styles.slotText, active ? styles.slotTextActive : null]}>
-                            {slot}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                )}
-              </View>
-            </ScrollView>
-
-            <View style={styles.footer}>
-              <Pressable
-                onPress={onClose}
-                style={styles.cancelButton}
-                accessibilityRole="button"
-                accessibilityLabel="Cancel">
-                <Text style={styles.cancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  if (!canBook || !selectedTime) return;
-                  onBook?.(selected, selectedTime);
-                  onClose();
-                }}
-                disabled={!canBook}
-                style={[styles.bookButton, !canBook ? styles.bookDisabled : null]}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: !canBook }}
-                accessibilityLabel="Book Demo">
-                <Text style={styles.bookText}>Book Demo</Text>
-              </Pressable>
             </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Select Time</Text>
+              {loadingSlots ? (
+                <ActivityIndicator color={Brand.gold} />
+              ) : slots.length === 0 ? (
+                <View style={styles.noSlots}>
+                  <Text style={styles.noSlotsText}>No slots for this date</Text>
+                </View>
+              ) : (
+                <View style={styles.slots}>
+                  {slots.map((slot) => {
+                    const active = slot.id === selectedSlotId;
+                    return (
+                      <Pressable
+                        key={slot.id}
+                        onPress={() => setSelectedSlotId(slot.id)}
+                        style={[styles.slot, active ? styles.slotActive : null]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}>
+                        <Text style={[styles.slotText, active ? styles.slotTextActive : null]}>
+                          {formatDisplayTime(slot.time)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          </ScrollView>
+
+          <View style={styles.footer}>
+            <Pressable
+              onPress={onClose}
+              style={styles.cancelButton}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel">
+              <Text style={styles.cancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                void handleBook();
+              }}
+              disabled={!canBook}
+              style={[styles.bookButton, !canBook ? styles.bookDisabled : null]}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canBook }}
+              accessibilityLabel="Book Demo">
+              {submitting ? (
+                <ActivityIndicator color={Brand.white} />
+              ) : (
+                <Text style={styles.bookText}>Book Demo</Text>
+              )}
+            </Pressable>
           </View>
         </SafeAreaView>
       </View>
     </Modal>
   );
 }
+
+const WEEKDAY_NAMES = [
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+] as const;
 
 function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -236,12 +421,28 @@ function addMonths(date: Date, amount: number) {
   return new Date(date.getFullYear(), date.getMonth() + amount, 1);
 }
 
+function formatDate(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function formatDisplayTime(time: string) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!match) return time;
+  const hours = Number(match[1]);
+  const minutes = match[2];
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 || 12;
+  return `${hour12}:${minutes} ${suffix}`;
+}
+
 function buildCalendarDays(cursor: Date) {
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const first = new Date(year, month, 1);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  // Monday-first offset
   const startOffset = (first.getDay() + 6) % 7;
   const cells: (Date | null)[] = [];
   for (let i = 0; i < startOffset; i += 1) cells.push(null);
@@ -252,31 +453,41 @@ function buildCalendarDays(cursor: Date) {
   return cells;
 }
 
-/** Demo stub: weekdays have sample slots; weekends none. */
-function getSlotsForDate(date: Date) {
-  const day = date.getDay();
-  if (day === 0 || day === 6) return [] as string[];
-  return ['4:00 PM', '5:00 PM', '6:30 PM'];
+function chunkWeeks(cells: (Date | null)[]) {
+  const weeks: (Date | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) {
+    weeks.push(cells.slice(i, i + 7));
+  }
+  return weeks;
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
+  overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
   },
-  safe: {
-    maxHeight: '94%',
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
   },
-  card: {
+  sheet: {
     backgroundColor: Brand.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
+    maxHeight: '92%',
     overflow: 'hidden',
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: Brand.border,
+    marginTop: 8,
   },
   header: {
     paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingTop: 12,
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Brand.border,
@@ -305,12 +516,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: Brand.inputBackground,
   },
+  bodyScroll: {
+    flexGrow: 0,
+  },
   body: {
-    padding: 16,
-    gap: 18,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    gap: 14,
   },
   section: {
-    gap: 10,
+    gap: 8,
   },
   sectionTitle: {
     color: Brand.navy,
@@ -321,8 +537,10 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: Brand.border,
-    padding: 12,
-    gap: 10,
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 8,
+    gap: 6,
   },
   monthRow: {
     flexDirection: 'row',
@@ -347,6 +565,7 @@ const styles = StyleSheet.create({
   },
   weekRow: {
     flexDirection: 'row',
+    marginBottom: 2,
   },
   weekday: {
     flex: 1,
@@ -354,17 +573,31 @@ const styles = StyleSheet.create({
     color: Brand.muted,
     fontSize: 11,
     fontWeight: '600',
+    paddingVertical: 2,
   },
   grid: {
+    gap: 2,
+  },
+  weekGridRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
   },
   dayCell: {
-    width: '14.28%',
-    aspectRatio: 1,
+    flex: 1,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 10,
+  },
+  dayCellEmpty: {
+    flex: 1,
+    height: 36,
+  },
+  dayInner: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   daySelected: {
     backgroundColor: Brand.gold,
@@ -372,9 +605,12 @@ const styles = StyleSheet.create({
   dayToday: {
     backgroundColor: '#FFF3C4',
   },
+  dayDisabled: {
+    opacity: 0.35,
+  },
   dayText: {
     color: Brand.navy,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   dayTextSelected: {
@@ -384,20 +620,23 @@ const styles = StyleSheet.create({
   dayTextToday: {
     color: Brand.navy,
   },
+  dayTextDisabled: {
+    color: Brand.muted,
+  },
   legend: {
     flexDirection: 'row',
-    gap: 16,
-    paddingTop: 4,
+    gap: 14,
+    paddingTop: 2,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   legendSwatch: {
-    width: 12,
-    height: 12,
-    borderRadius: 3,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   legendToday: {
     backgroundColor: '#FFF3C4',
@@ -407,15 +646,15 @@ const styles = StyleSheet.create({
   },
   legendText: {
     color: Brand.subtitle,
-    fontSize: 12,
+    fontSize: 11,
   },
   noSlots: {
     borderRadius: 999,
     backgroundColor: '#FFF8E7',
     borderWidth: 1,
     borderColor: '#FDE68A',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     alignItems: 'center',
   },
   noSlotsText: {
@@ -434,7 +673,7 @@ const styles = StyleSheet.create({
     borderColor: Brand.border,
     backgroundColor: Brand.inputBackground,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 9,
   },
   slotActive: {
     borderColor: Brand.gold,
@@ -448,16 +687,26 @@ const styles = StyleSheet.create({
   slotTextActive: {
     fontWeight: '800',
   },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  loader: {
+    marginVertical: 10,
+  },
   footer: {
     flexDirection: 'row',
     gap: 10,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Brand.border,
   },
   cancelButton: {
     flex: 1,
-    minHeight: 46,
+    minHeight: 44,
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: Brand.gold,
@@ -471,7 +720,7 @@ const styles = StyleSheet.create({
   },
   bookButton: {
     flex: 1,
-    minHeight: 46,
+    minHeight: 44,
     borderRadius: 12,
     backgroundColor: Brand.navy,
     alignItems: 'center',

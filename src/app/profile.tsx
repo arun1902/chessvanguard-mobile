@@ -1,28 +1,52 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { PrimaryButton, StudentCard, StudentPage } from '@/components/student/student-page';
 import { Brand } from '@/constants/brand';
-import { DEMO_STUDENT } from '@/constants/dashboard';
+import { useAuth } from '@/features/auth/session';
+import { api, ApiError } from '@/services/api';
 
-const DEMO_EMAIL = 'arunkumarvlogs2002@gmail.com';
-const DEMO_WHATSAPP = '6283230651';
 const OTP_RESEND_SECONDS = 60;
 
 type PrefKey = 'email' | 'whatsapp' | 'inApp';
 type AccountMode = 'view' | 'edit' | 'otp';
 
 export default function ProfileScreen() {
+  const { user } = useAuth();
   const [mode, setMode] = useState<AccountMode>('view');
-  const [savedWhatsapp, setSavedWhatsapp] = useState(DEMO_WHATSAPP);
-  const [whatsapp, setWhatsapp] = useState(DEMO_WHATSAPP);
+  const [savedWhatsapp, setSavedWhatsapp] = useState('');
+  const [whatsapp, setWhatsapp] = useState('');
   const [otp, setOtp] = useState('');
   const [resendIn, setResendIn] = useState(0);
+  const [saving, setSaving] = useState(false);
   const [prefs, setPrefs] = useState<Record<PrefKey, boolean>>({
     email: true,
     whatsapp: true,
     inApp: true,
   });
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const context = await api.userVerification.getMobileContext();
+        if (!active) return;
+        const mobile =
+          String(
+            (context as Record<string, unknown>).mobileNumber ??
+              (context as Record<string, unknown>).whatsappNumber ??
+              ''
+          ) || '';
+        setSavedWhatsapp(mobile);
+        setWhatsapp(mobile);
+      } catch {
+        // Profile still works with auth identity if context is unavailable.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -47,18 +71,49 @@ export default function ProfileScreen() {
     setMode('view');
   };
 
-  const sendOtp = () => {
-    setOtp('');
-    setResendIn(OTP_RESEND_SECONDS);
-    setMode('otp');
+  const sendOtp = async () => {
+    const target = whatsapp.trim();
+    if (target.length < 10) {
+      Alert.alert('Invalid number', 'Enter a valid WhatsApp number.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.userVerification.send({ type: 'WHATSAPP', target });
+      setOtp('');
+      setResendIn(OTP_RESEND_SECONDS);
+      setMode('otp');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Could not send OTP.';
+      Alert.alert('OTP failed', message);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const verifyAndSave = () => {
+  const verifyAndSave = async () => {
     if (otp.trim().length < 6) return;
-    setSavedWhatsapp(whatsapp);
-    setOtp('');
-    setResendIn(0);
-    setMode('view');
+    setSaving(true);
+    try {
+      await api.userVerification.confirm({
+        type: 'WHATSAPP',
+        target: whatsapp.trim(),
+        otp: otp.trim(),
+      });
+      await api.userVerification.updateMobileContext({
+        mobileNumber: whatsapp.trim(),
+        whatsappOptIn: true,
+      });
+      setSavedWhatsapp(whatsapp.trim());
+      setOtp('');
+      setResendIn(0);
+      setMode('view');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Could not verify OTP.';
+      Alert.alert('Verification failed', message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -67,12 +122,16 @@ export default function ProfileScreen() {
       subtitle="Manage your account and notification preferences.">
       <StudentCard style={styles.card}>
         <Text style={styles.sectionTitle}>Account Info</Text>
-        <InfoRow label="NAME" value={DEMO_STUDENT.name} />
-        <InfoRow label="EMAIL" value={DEMO_EMAIL} />
+        <InfoRow label="NAME" value={user?.name?.trim() || '—'} />
+        <InfoRow label="EMAIL" value={user?.email || '—'} />
 
         {mode === 'view' ? (
           <>
-            <InfoRow label="WHATSAPP NUMBER" value={savedWhatsapp} verified />
+            <InfoRow
+              label="WHATSAPP NUMBER"
+              value={savedWhatsapp || 'Not set'}
+              verified={Boolean(savedWhatsapp)}
+            />
             <Pressable
               onPress={startEdit}
               style={styles.editButton}
@@ -98,7 +157,7 @@ export default function ProfileScreen() {
             <Text style={styles.helper}>Changing your number requires OTP verification.</Text>
             <View style={styles.editActions}>
               <View style={styles.actionGrow}>
-                <PrimaryButton label="Send OTP" onPress={sendOtp} />
+                <PrimaryButton label={saving ? 'Sending…' : 'Send OTP'} onPress={() => void sendOtp()} disabled={saving} />
               </View>
               <Pressable
                 onPress={cancelEdit}
@@ -127,14 +186,14 @@ export default function ProfileScreen() {
             <View style={styles.editActions}>
               <View style={styles.actionGrow}>
                 <PrimaryButton
-                  label="Verify & Save"
-                  onPress={verifyAndSave}
-                  disabled={otp.trim().length < 6}
+                  label={saving ? 'Verifying…' : 'Verify & Save'}
+                  onPress={() => void verifyAndSave()}
+                  disabled={saving || otp.trim().length < 6}
                 />
               </View>
               <Pressable
-                onPress={sendOtp}
-                disabled={resendIn > 0}
+                onPress={() => void sendOtp()}
+                disabled={resendIn > 0 || saving}
                 style={[styles.cancelButton, resendIn > 0 ? styles.resendDisabled : null]}
                 accessibilityRole="button"
                 accessibilityState={{ disabled: resendIn > 0 }}

@@ -1,10 +1,11 @@
 import { SymbolView } from 'expo-symbols';
 import { router } from 'expo-router';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Brand } from '@/constants/brand';
-import { DEMO_COACH_NOTIFICATIONS } from '@/constants/coach';
+import { useNotifications } from '@/hooks/use-notifications';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 
 type CoachNotificationsSheetProps = {
   visible: boolean;
@@ -12,6 +13,9 @@ type CoachNotificationsSheetProps = {
 };
 
 export function CoachNotificationsSheet({ visible, onClose }: CoachNotificationsSheetProps) {
+  const { items, loading, error, refresh, markRead } = useNotifications(8, visible);
+  const { refresh: refreshUnread } = useUnreadCount();
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -39,27 +43,62 @@ export function CoachNotificationsSheet({ visible, onClose }: CoachNotifications
             style={styles.list}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}>
-            {DEMO_COACH_NOTIFICATIONS.map((item, index) => (
-              <View
-                key={item.id}
-                style={[
-                  styles.item,
-                  index < DEMO_COACH_NOTIFICATIONS.length - 1 ? styles.itemBorder : null,
-                ]}>
-                <View style={styles.iconWrap}>
-                  <SymbolView
-                    name={{ ios: 'calendar', android: 'calendar_month', web: 'calendar_month' }}
-                    size={18}
-                    tintColor="#0F766E"
-                  />
-                </View>
-                <View style={styles.copy}>
-                  <Text style={styles.itemTitle}>{item.title}</Text>
-                  <Text style={styles.itemBody}>{item.body}</Text>
-                  <Text style={styles.itemTime}>{item.timeAgo}</Text>
-                </View>
+            {loading ? (
+              <View style={styles.center}>
+                <ActivityIndicator color={Brand.gold} />
               </View>
-            ))}
+            ) : null}
+
+            {!loading && error ? (
+              <View style={styles.center}>
+                <Text style={styles.errorText}>{error}</Text>
+                <Pressable onPress={() => void refresh()} accessibilityRole="button">
+                  <Text style={styles.retryText}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {!loading && !error && items.length === 0 ? (
+              <View style={styles.center}>
+                <Text style={styles.emptyText}>No notifications yet.</Text>
+              </View>
+            ) : null}
+
+            {!loading && !error
+              ? items.map((item, index) => (
+                  <Pressable
+                    key={item.id}
+                    onPress={async () => {
+                      if (item.unread) {
+                        await markRead(item.id);
+                        await refreshUnread();
+                      }
+                    }}
+                    style={[
+                      styles.item,
+                      item.unread ? styles.itemUnread : null,
+                      index < items.length - 1 ? styles.itemBorder : null,
+                    ]}>
+                    <View style={[styles.iconWrap, item.unread ? styles.iconUnread : null]}>
+                      <SymbolView
+                        name={{ ios: 'calendar', android: 'calendar_month', web: 'calendar_month' }}
+                        size={18}
+                        tintColor="#0F766E"
+                      />
+                    </View>
+                    <View style={styles.copy}>
+                      <View style={styles.titleRow}>
+                        <Text style={styles.itemTitle}>{item.title}</Text>
+                        {item.unread ? <View style={styles.dot} /> : null}
+                      </View>
+                      <Text style={styles.itemBody} numberOfLines={3}>
+                        {item.body}
+                      </Text>
+                      <Text style={styles.itemTime}>{item.timeAgo}</Text>
+                    </View>
+                  </Pressable>
+                ))
+              : null}
           </ScrollView>
 
           <Pressable
@@ -130,11 +169,18 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 16,
+    minHeight: 120,
   },
   item: {
     flexDirection: 'row',
     gap: 12,
     paddingVertical: 14,
+  },
+  itemUnread: {
+    backgroundColor: '#FFFBEB',
+    marginHorizontal: -8,
+    paddingHorizontal: 8,
+    borderRadius: 12,
   },
   itemBorder: {
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -148,14 +194,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconUnread: {
+    backgroundColor: '#A7F3D0',
+  },
   copy: {
     flex: 1,
     gap: 4,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   itemTitle: {
+    flex: 1,
     color: Brand.navy,
     fontSize: 14,
     fontWeight: '800',
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Brand.gold,
   },
   itemBody: {
     color: Brand.subtitle,
@@ -166,6 +227,25 @@ const styles = StyleSheet.create({
     color: Brand.muted,
     fontSize: 12,
     marginTop: 2,
+  },
+  center: {
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 28,
+  },
+  emptyText: {
+    color: Brand.subtitle,
+    fontSize: 14,
+  },
+  errorText: {
+    color: Brand.error,
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  retryText: {
+    color: Brand.navy,
+    fontSize: 13,
+    fontWeight: '700',
   },
   footer: {
     minHeight: 48,

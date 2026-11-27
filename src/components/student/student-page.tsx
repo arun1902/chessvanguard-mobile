@@ -15,12 +15,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { StudentNotificationsSheet } from '@/components/student/notifications-sheet';
 import { Brand } from '@/constants/brand';
-import { DEMO_STUDENT } from '@/constants/dashboard';
+import { RequireAuth } from '@/features/auth/require-auth';
+import { useCvCoins } from '@/hooks/use-cv-coins';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 
 type StudentPageProps = {
   title: string;
   subtitle?: string;
   children: ReactNode;
+  /** Rendered outside the ScrollView (use for Modals / sheets). */
+  overlay?: ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
   showBack?: boolean;
 };
@@ -29,75 +33,83 @@ export function StudentPage({
   title,
   subtitle,
   children,
+  overlay,
   contentStyle,
   showBack = true,
 }: StudentPageProps) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const { coins } = useCvCoins();
+  const { count: notificationCount } = useUnreadCount();
 
   return (
-    <View style={styles.root}>
-      <StatusBar style="dark" />
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
-        <View style={styles.topBar}>
-          <View style={styles.titleBlock}>
-            {showBack ? (
+    <RequireAuth allowedRoles={['Student']}>
+      <View style={styles.root}>
+        <StatusBar style="dark" />
+        <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
+          <View style={styles.topBar}>
+            <View style={styles.titleBlock}>
+              {showBack ? (
+                <Pressable
+                  onPress={() => (router.canGoBack() ? router.back() : router.replace('/dashboard'))}
+                  style={styles.backButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="Go back"
+                  hitSlop={8}>
+                  <SymbolView
+                    name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }}
+                    size={18}
+                    tintColor={Brand.navy}
+                  />
+                </Pressable>
+              ) : null}
+              <View style={styles.titleCopy}>
+                <Text style={styles.brand}>ChessVanguard</Text>
+                <Text style={styles.title}>{title}</Text>
+              </View>
+            </View>
+
+            <View style={styles.actions}>
+              <View style={styles.coinsChip}>
+                <Text style={styles.coinsText}>{coins} Coins</Text>
+              </View>
               <Pressable
-                onPress={() => (router.canGoBack() ? router.back() : router.replace('/dashboard'))}
-                style={styles.backButton}
+                onPress={() => setNotificationsOpen(true)}
+                style={styles.iconButton}
                 accessibilityRole="button"
-                accessibilityLabel="Go back"
+                accessibilityLabel="Notifications"
                 hitSlop={8}>
                 <SymbolView
-                  name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }}
-                  size={18}
-                  tintColor={Brand.navy}
+                  name={{ ios: 'bell.fill', android: 'notifications', web: 'notifications' }}
+                  size={16}
+                  tintColor={Brand.navySoft}
                 />
+                {notificationCount > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>
+                      {notificationCount > 99 ? '99+' : notificationCount}
+                    </Text>
+                  </View>
+                ) : null}
               </Pressable>
-            ) : null}
-            <View style={styles.titleCopy}>
-              <Text style={styles.brand}>ChessVanguard</Text>
-              <Text style={styles.title}>{title}</Text>
             </View>
           </View>
 
-          <View style={styles.actions}>
-            <View style={styles.coinsChip}>
-              <Text style={styles.coinsText}>{DEMO_STUDENT.coins} Coins</Text>
-            </View>
-            <Pressable
-              onPress={() => setNotificationsOpen(true)}
-              style={styles.iconButton}
-              accessibilityRole="button"
-              accessibilityLabel="Notifications"
-              hitSlop={8}>
-              <SymbolView
-                name={{ ios: 'bell.fill', android: 'notifications', web: 'notifications' }}
-                size={16}
-                tintColor={Brand.navySoft}
-              />
-              {DEMO_STUDENT.notificationCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{DEMO_STUDENT.notificationCount}</Text>
-                </View>
-              ) : null}
-            </Pressable>
-          </View>
-        </View>
+          <ScrollView
+            contentContainerStyle={[styles.content, contentStyle]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled">
+            {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+            {children}
+          </ScrollView>
+        </SafeAreaView>
 
-        <ScrollView
-          contentContainerStyle={[styles.content, contentStyle]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled">
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-          {children}
-        </ScrollView>
-      </SafeAreaView>
-
-      <StudentNotificationsSheet
-        visible={notificationsOpen}
-        onClose={() => setNotificationsOpen(false)}
-      />
-    </View>
+        <StudentNotificationsSheet
+          visible={notificationsOpen}
+          onClose={() => setNotificationsOpen(false)}
+        />
+        {overlay}
+      </View>
+    </RequireAuth>
   );
 }
 
@@ -175,12 +187,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   backButton: {
-    width: 36,
+    width: 32,
     height: 36,
-    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Brand.inputBackground,
+    marginLeft: -4,
   },
   titleCopy: {
     flex: 1,

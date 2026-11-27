@@ -3,6 +3,7 @@ import { StyleSheet, Text, TextInput } from 'react-native';
 
 import { CoachCard, CoachPage, PrimaryButton } from '@/components/coach/coach-page';
 import { Brand } from '@/constants/brand';
+import { openWhatsAppSupport } from '@/utils/whatsapp';
 
 const MAX = 300;
 
@@ -28,7 +29,7 @@ export default function CoachSupportScreen() {
         <PrimaryButton
           label="Send via WhatsApp"
           disabled={message.trim().length === 0}
-          onPress={() => undefined}
+          onPress={() => void openWhatsAppSupport(message)}
         />
       </CoachCard>
     </CoachPage>

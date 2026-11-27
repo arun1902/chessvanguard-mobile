@@ -4,14 +4,19 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { CoachCard, CoachPage } from '@/components/coach/coach-page';
 import { Brand } from '@/constants/brand';
-import { COACH_NAV_ITEMS, DEMO_COACH_USER } from '@/constants/coach';
+import { COACH_NAV_ITEMS } from '@/constants/coach';
+import { useAuth } from '@/features/auth/session';
 
 export default function CoachMoreScreen() {
+  const { user } = useAuth();
+  const displayName = user?.name?.trim() || 'Coach';
+
   return (
     <CoachPage
       title="More"
-      subtitle={`Signed in as ${DEMO_COACH_USER.name}. Jump to any coach destination.`}
-      showBack={false}>
+      subtitle={`Signed in as ${displayName}. Jump to any coach destination.`}
+      showBack={false}
+      tabBar>
       <CoachCard style={styles.list}>
         {COACH_NAV_ITEMS.map((item, index) => (
           <Pressable

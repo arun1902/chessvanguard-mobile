@@ -14,21 +14,38 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RegisterForm, type RegisterFormValues } from '@/components/register/register-form';
+import { useToast } from '@/components/ui/app-toast';
 import { Brand, LoginLayout } from '@/constants/brand';
-import { registerStudentRequest } from '@/services/auth';
+import { ApiError } from '@/features/auth/types';
+import { getHomeHrefForRole, useAuth } from '@/features/auth/session';
+import { alreadyRegisteredMessage, studentAccountCreatedMessage } from '@/utils/auth-messages';
 
 const TERMS_URL = 'https://chessvanguard.com/terms-conditions/';
 const PRIVACY_URL = 'https://chessvanguard.com/privacy-policy/';
 
 export default function RegisterStudentScreen() {
+  const { registerStudent, logout } = useAuth();
+  const { showSuccess } = useToast();
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (values: RegisterFormValues) => {
     setLoading(true);
     try {
-      await registerStudentRequest(values);
-      // Successful registration will continue into the app once the API is connected.
-      router.replace('/dashboard');
+      const session = await registerStudent(values);
+      const home = getHomeHrefForRole(session.user.role);
+      if (!home) {
+        await logout();
+        throw new Error(
+          'This account role is not supported in the mobile app. Please use the web portal.',
+        );
+      }
+      showSuccess(studentAccountCreatedMessage(session.user));
+      router.replace(home);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw new Error(alreadyRegisteredMessage(error.message, 'student'));
+      }
+      throw error;
     } finally {
       setLoading(false);
     }

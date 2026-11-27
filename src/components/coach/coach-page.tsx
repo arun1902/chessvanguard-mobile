@@ -16,7 +16,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CoachNotificationsSheet } from '@/components/coach/notifications-sheet';
 import { CoachProfileMenu } from '@/components/coach/profile-menu';
 import { Brand } from '@/constants/brand';
-import { DEMO_COACH_USER } from '@/constants/coach';
+import { BottomTabInset } from '@/constants/theme';
+import { useAuth } from '@/features/auth/session';
+import { useUnreadCount } from '@/hooks/use-unread-count';
+import { initialsFromName } from '@/utils/format';
 
 type CoachPageProps = {
   title: string;
@@ -24,6 +27,8 @@ type CoachPageProps = {
   children: ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
   showBack?: boolean;
+  /** When true, leave room for the coach NativeTabs bar. */
+  tabBar?: boolean;
 };
 
 export function CoachPage({
@@ -32,14 +37,22 @@ export function CoachPage({
   children,
   contentStyle,
   showBack = true,
+  tabBar = false,
 }: CoachPageProps) {
+  const { user } = useAuth();
+  const { count: notificationCount } = useUnreadCount();
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const displayName = user?.name?.trim() || '';
+  const emailLocal = user?.email?.trim().split('@')[0] || '';
+  const initials = initialsFromName(displayName || emailLocal, 'C');
 
   return (
     <View style={styles.root}>
       <StatusBar style="dark" />
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={tabBar ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']}>
         <View style={styles.topBar}>
           <View style={styles.titleBlock}>
             {showBack ? (
@@ -80,9 +93,11 @@ export function CoachPage({
                 size={17}
                 tintColor={Brand.navySoft}
               />
-              {DEMO_COACH_USER.notificationCount > 0 ? (
+              {notificationCount > 0 ? (
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{DEMO_COACH_USER.notificationCount}</Text>
+                  <Text style={styles.badgeText}>
+                    {notificationCount > 99 ? '99+' : notificationCount}
+                  </Text>
                 </View>
               ) : null}
             </Pressable>
@@ -108,13 +123,17 @@ export function CoachPage({
               accessibilityRole="button"
               accessibilityLabel="Profile menu"
               hitSlop={8}>
-              <Text style={styles.avatarText}>C</Text>
+              <Text style={styles.avatarText}>{initials}</Text>
             </Pressable>
           </View>
         </View>
 
         <ScrollView
-          contentContainerStyle={[styles.content, contentStyle]}
+          contentContainerStyle={[
+            styles.content,
+            tabBar ? { paddingBottom: BottomTabInset + 28 } : null,
+            contentStyle,
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled">
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -161,12 +180,11 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   backButton: {
-    width: 36,
+    width: 32,
     height: 36,
-    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Brand.inputBackground,
+    marginLeft: -4,
   },
   titleCopy: {
     flex: 1,

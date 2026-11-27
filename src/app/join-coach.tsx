@@ -17,21 +17,37 @@ import {
   CoachRegisterForm,
   type CoachRegisterFormValues,
 } from '@/components/register/coach-register-form';
+import { useToast } from '@/components/ui/app-toast';
 import { Brand, LoginLayout } from '@/constants/brand';
-import { registerCoachRequest } from '@/services/auth';
+import { ApiError } from '@/features/auth/types';
+import { useAuth } from '@/features/auth/session';
+import { alreadyRegisteredMessage, coachAccountCreatedMessage } from '@/utils/auth-messages';
 
 const TERMS_URL = 'https://chessvanguard.com/terms-conditions/';
 const PRIVACY_URL = 'https://chessvanguard.com/privacy-policy/';
 
 export default function JoinCoachScreen() {
+  const { registerCoach, logout } = useAuth();
+  const { showSuccess } = useToast();
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (values: CoachRegisterFormValues) => {
     setLoading(true);
     try {
-      await registerCoachRequest(values);
-      // Successful registration will continue into the app once the API is connected.
-      router.replace('/coach/dashboard');
+      const session = await registerCoach(values);
+      if (session.user.role !== 'Coach') {
+        await logout();
+        throw new Error(
+          'This account role is not supported in the mobile app. Please use the web portal.',
+        );
+      }
+      showSuccess(coachAccountCreatedMessage(session.user));
+      router.replace('/verify-email');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw new Error(alreadyRegisteredMessage(error.message, 'coach'));
+      }
+      throw error;
     } finally {
       setLoading(false);
     }

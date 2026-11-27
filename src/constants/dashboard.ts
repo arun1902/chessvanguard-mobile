@@ -72,34 +72,6 @@ export const DEMO_STUDENT = {
   longestStreak: 0,
 };
 
-export type StudentNotification = {
-  id: string;
-  title: string;
-  body: string;
-  timeAgo: string;
-};
-
-export const DEMO_STUDENT_NOTIFICATIONS: StudentNotification[] = [
-  {
-    id: '1',
-    title: 'Demo Confirmed: Coach',
-    body: "Arun Kumar's demo with Coach is confirmed on Wednesday 11 November 2026 at 15:00 IST. Join at http://localhost:8080. Need help?…",
-    timeAgo: '13 days ago',
-  },
-  {
-    id: '2',
-    title: 'Demo Confirmed: Coach',
-    body: "Arun Kumar's demo with Coach is confirmed on Wednesday 11 November 2026 at 15:00 IST. Join at http://localhost:8080. Need help?…",
-    timeAgo: '13 days ago',
-  },
-  {
-    id: '3',
-    title: 'Demo Confirmed: Coach',
-    body: "Arun Kumar's demo with Coach is confirmed on Wednesday 11 November 2026 at 15:00 IST. Join at http://localhost:8080. Need help?…",
-    timeAgo: '13 days ago',
-  },
-];
-
 export const DEMO_COACH = {
   initial: 'C',
   languages: ['English', 'Hindi'],

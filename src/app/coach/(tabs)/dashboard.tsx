@@ -1,28 +1,83 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { RateSessionModal } from '@/components/coach/rate-session-modal';
+import { ClassSessionCard } from '@/components/classes/class-session-card';
+import { CoachUpcomingActions } from '@/components/classes/coach-upcoming-actions';
 import { CoachCard, CoachPage } from '@/components/coach/coach-page';
 import { Brand } from '@/constants/brand';
-import { DEMO_COACH_CLASS, DEMO_COACH_USER } from '@/constants/coach';
-
-const STATS = [
-  { label: 'MY STUDENTS', value: '0', hint: 'Students currently in your batches' },
-  { label: 'UPCOMING DEMOS', value: '0', hint: 'Assigned to you' },
-  { label: 'OVERDUE SESSIONS', value: '0', hint: 'In negative balance' },
-];
+import { useAuth } from '@/features/auth/session';
+import { useMyClasses } from '@/hooks/use-my-classes';
+import { useNotifications } from '@/hooks/use-notifications';
 
 export default function CoachDashboardScreen() {
-  const [rateOpen, setRateOpen] = useState(false);
+  const { user } = useAuth();
+  const displayName = user?.name?.trim() || 'Coach';
+  const { buckets, loading, error, refresh } = useMyClasses('All classes', 'All time');
+  const { items: notifications } = useNotifications(10);
+  const upcoming = buckets.Upcoming.slice(0, 3);
+  const demoUpcoming = buckets.Upcoming.filter((item) => item.type === 'Demo').length;
+  const bookingAlerts = notifications
+    .filter((item) => {
+      const text = `${item.title} ${item.body}`.toLowerCase();
+      return (
+        item.unread &&
+        (item.type === 'demo_booking' ||
+          item.type === 'coach_demo_booked' ||
+          text.includes('demo booked') ||
+          text.includes('booked a demo'))
+      );
+    })
+    .slice(0, 3);
+
+  const stats = [
+    {
+      label: 'MY STUDENTS',
+      value: '—',
+      hint: 'Open Students to manage your roster',
+    },
+    {
+      label: 'UPCOMING DEMOS',
+      value: String(demoUpcoming),
+      hint: 'Assigned to you',
+    },
+    {
+      label: 'UPCOMING CLASSES',
+      value: String(buckets.Upcoming.length),
+      hint: 'Live and scheduled sessions',
+    },
+  ];
 
   return (
     <CoachPage
       title="Dashboard"
-      subtitle={`Welcome, ${DEMO_COACH_USER.username}. Overview of your assigned students and upcoming sessions.`}
-      showBack={false}>
+      subtitle={`Welcome, ${displayName}. Overview of your assigned students and upcoming sessions.`}
+      showBack={false}
+      tabBar>
+      {bookingAlerts.length > 0 ? (
+        <CoachCard style={styles.alertCard}>
+          <Text style={styles.sectionTitle}>New bookings</Text>
+          <Text style={styles.sectionHint}>Students just booked sessions with you.</Text>
+          {bookingAlerts.map((item) => (
+            <Pressable
+              key={item.id}
+              onPress={() => router.push('/coach/notifications')}
+              style={styles.alertRow}
+              accessibilityRole="button">
+              <Text style={styles.alertTitle}>{item.title}</Text>
+              <Text style={styles.alertBody} numberOfLines={2}>
+                {item.body}
+              </Text>
+              <Text style={styles.alertTime}>{item.timeAgo}</Text>
+            </Pressable>
+          ))}
+          <Pressable onPress={() => router.push('/coach/notifications')} accessibilityRole="button">
+            <Text style={styles.link}>Open notifications →</Text>
+          </Pressable>
+        </CoachCard>
+      ) : null}
+
       <View style={styles.stats}>
-        {STATS.map((stat) => (
+        {stats.map((stat) => (
           <CoachCard key={stat.label} style={styles.statCard}>
             <Text style={styles.statLabel}>{stat.label}</Text>
             <Text style={styles.statValue}>{stat.value}</Text>
@@ -35,34 +90,35 @@ export default function CoachDashboardScreen() {
         <Text style={styles.sectionTitle}>My Classes</Text>
         <Text style={styles.sectionHint}>Your live and upcoming coaching sessions.</Text>
 
-        <View style={styles.classCard}>
-          <Text style={styles.studentName}>{DEMO_COACH_CLASS.studentName}</Text>
-          <Text style={styles.coachLabel}>{DEMO_COACH_CLASS.coachLabel}</Text>
-          <View style={styles.tags}>
-            <View style={styles.tag}>
-              <Text style={styles.tagText}>Demo Session</Text>
-            </View>
-            <View style={[styles.tag, styles.tagWarn]}>
-              <Text style={styles.tagText}>{DEMO_COACH_CLASS.status}</Text>
-            </View>
+        {loading ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={Brand.gold} />
           </View>
-          <View style={styles.metaRow}>
-            <View style={styles.meta}>
-              <Text style={styles.metaLabel}>DATE</Text>
-              <Text style={styles.metaValue}>{DEMO_COACH_CLASS.dateLabel}</Text>
-            </View>
-            <View style={styles.meta}>
-              <Text style={styles.metaLabel}>TIME</Text>
-              <Text style={styles.metaValue}>{DEMO_COACH_CLASS.timeLabel}</Text>
-            </View>
+        ) : null}
+
+        {!loading && error ? (
+          <View style={styles.center}>
+            <Text style={styles.errorText}>{error}</Text>
+            <Pressable onPress={() => void refresh()} accessibilityRole="button">
+              <Text style={styles.link}>Try again</Text>
+            </Pressable>
           </View>
-          <Pressable
-            onPress={() => setRateOpen(true)}
-            style={styles.rateButton}
-            accessibilityRole="button">
-            <Text style={styles.rateText}>Rate Session</Text>
-          </Pressable>
-        </View>
+        ) : null}
+
+        {!loading && !error && upcoming.length === 0 ? (
+          <Text style={styles.placeholder}>No upcoming classes right now.</Text>
+        ) : null}
+
+        {!loading && !error
+          ? upcoming.map((item) => (
+              <ClassSessionCard
+                key={`${item.id}-${item.scheduledDate}`}
+                item={item}
+                perspective="coach"
+                footer={<CoachUpcomingActions item={item} onChanged={refresh} />}
+              />
+            ))
+          : null}
       </CoachCard>
 
       <CoachCard style={styles.section}>
@@ -73,24 +129,39 @@ export default function CoachDashboardScreen() {
         </Text>
       </CoachCard>
 
-      <CoachCard style={styles.section}>
-        <Text style={styles.sectionTitle}>Activity Log</Text>
-        <Text style={styles.placeholder}>
-          A unified feed of interaction remarks and system alerts will be integrated here in the next
-          version.
-        </Text>
-      </CoachCard>
-
       <Pressable onPress={() => router.push('/coach/classes')} accessibilityRole="button">
         <Text style={styles.link}>View all classes →</Text>
       </Pressable>
-
-      <RateSessionModal visible={rateOpen} onClose={() => setRateOpen(false)} />
     </CoachPage>
   );
 }
 
 const styles = StyleSheet.create({
+  alertCard: {
+    gap: 10,
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+  },
+  alertRow: {
+    gap: 4,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#FDE68A',
+  },
+  alertTitle: {
+    color: Brand.navy,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  alertBody: {
+    color: Brand.subtitle,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  alertTime: {
+    color: Brand.muted,
+    fontSize: 12,
+  },
   stats: {
     gap: 10,
   },
@@ -125,75 +196,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 4,
   },
-  classCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Brand.border,
-    backgroundColor: Brand.inputBackground,
-    padding: 14,
-    gap: 8,
-  },
-  studentName: {
-    color: Brand.navy,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  coachLabel: {
-    color: Brand.subtitle,
-    fontSize: 13,
-  },
-  tags: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  tag: {
-    borderRadius: 999,
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  tagWarn: {
-    backgroundColor: '#DBEAFE',
-  },
-  tagText: {
-    color: Brand.navy,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  meta: {
-    flex: 1,
-    gap: 2,
-  },
-  metaLabel: {
-    color: Brand.muted,
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  metaValue: {
-    color: Brand.navy,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  rateButton: {
-    marginTop: 4,
-    minHeight: 42,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: Brand.gold,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Brand.white,
-  },
-  rateText: {
-    color: Brand.navy,
-    fontSize: 14,
-    fontWeight: '700',
-  },
   placeholder: {
     color: Brand.subtitle,
     fontSize: 13,
@@ -203,5 +205,15 @@ const styles = StyleSheet.create({
     color: Brand.navy,
     fontSize: 14,
     fontWeight: '700',
+  },
+  center: {
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  errorText: {
+    color: Brand.error,
+    fontSize: 13,
+    textAlign: 'center',
   },
 });

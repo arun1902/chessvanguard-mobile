@@ -3,6 +3,7 @@ import { StyleSheet, Text, TextInput } from 'react-native';
 
 import { PrimaryButton, StudentCard, StudentPage } from '@/components/student/student-page';
 import { Brand } from '@/constants/brand';
+import { openWhatsAppSupport } from '@/utils/whatsapp';
 
 const MAX_LENGTH = 300;
 
@@ -30,7 +31,7 @@ export default function SupportScreen() {
         <PrimaryButton
           label="Send via WhatsApp"
           disabled={message.trim().length === 0}
-          onPress={() => undefined}
+          onPress={() => void openWhatsAppSupport(message)}
         />
       </StudentCard>
     </StudentPage>

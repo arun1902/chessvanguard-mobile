@@ -4,9 +4,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Brand } from '@/constants/brand';
-import { DEMO_STUDENT } from '@/constants/dashboard';
 import { STUDENT_NAV_ITEMS } from '@/constants/student-nav';
 import { BottomTabInset } from '@/constants/theme';
+import { useAuth } from '@/features/auth/session';
 
 const SECTIONS = [
   { key: 'journey', title: 'My Chess Journey' },
@@ -15,13 +15,16 @@ const SECTIONS = [
 ] as const;
 
 export default function MoreScreen() {
+  const { user } = useAuth();
+  const displayName = user?.name?.trim() || 'Student';
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View>
           <Text style={styles.title}>More</Text>
           <Text style={styles.subtitle}>
-            Signed in as {DEMO_STUDENT.name}. Jump to any ChessVanguard student destination.
+            Signed in as {displayName}. Jump to any ChessVanguard student destination.
           </Text>
         </View>
 

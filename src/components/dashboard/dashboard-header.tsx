@@ -5,21 +5,23 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { StudentNotificationsSheet } from '@/components/student/notifications-sheet';
 import { StudentProfileMenu } from '@/components/student/profile-menu';
 import { Brand } from '@/constants/brand';
-import { DEMO_STUDENT } from '@/constants/dashboard';
+import { useAuth } from '@/features/auth/session';
+import { useCvCoins } from '@/hooks/use-cv-coins';
+import { useUnreadCount } from '@/hooks/use-unread-count';
+import { initialsFromName } from '@/utils/format';
 
 type DashboardHeaderProps = {
   onShopPress?: () => void;
 };
 
 export function DashboardHeader({ onShopPress }: DashboardHeaderProps) {
+  const { user } = useAuth();
+  const { coins } = useCvCoins();
+  const { count: notificationCount } = useUnreadCount();
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const initials = DEMO_STUDENT.name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+  const displayName = user?.name?.trim() || 'Student';
+  const initials = initialsFromName(displayName, 'S');
 
   return (
     <View style={styles.wrap}>
@@ -38,13 +40,13 @@ export function DashboardHeader({ onShopPress }: DashboardHeaderProps) {
             onPress={onShopPress}
             style={styles.coinsChip}
             accessibilityRole="button"
-            accessibilityLabel={`${DEMO_STUDENT.coins} coins`}>
+            accessibilityLabel={`${coins} coins`}>
             <SymbolView
               name={{ ios: 'circle.fill', android: 'monetization_on', web: 'monetization_on' }}
               size={12}
               tintColor={Brand.gold}
             />
-            <Text style={styles.coinsText}>{DEMO_STUDENT.coins}</Text>
+            <Text style={styles.coinsText}>{coins}</Text>
           </Pressable>
 
           <Pressable
@@ -58,9 +60,11 @@ export function DashboardHeader({ onShopPress }: DashboardHeaderProps) {
               size={17}
               tintColor={Brand.navySoft}
             />
-            {DEMO_STUDENT.notificationCount > 0 ? (
+            {notificationCount > 0 ? (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{DEMO_STUDENT.notificationCount}</Text>
+                <Text style={styles.badgeText}>
+                  {notificationCount > 99 ? '99+' : notificationCount}
+                </Text>
               </View>
             ) : null}
           </Pressable>
@@ -69,7 +73,7 @@ export function DashboardHeader({ onShopPress }: DashboardHeaderProps) {
             onPress={() => setMenuOpen(true)}
             style={styles.avatar}
             accessibilityRole="button"
-            accessibilityLabel={`Profile menu, ${DEMO_STUDENT.name}`}
+            accessibilityLabel={`Profile menu, ${displayName}`}
             hitSlop={8}>
             <Text style={styles.avatarText}>{initials}</Text>
           </Pressable>

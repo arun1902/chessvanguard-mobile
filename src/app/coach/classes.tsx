@@ -1,34 +1,61 @@
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { ClassSessionCard } from '@/components/classes/class-session-card';
+import { CoachUpcomingActions } from '@/components/classes/coach-upcoming-actions';
+import { CompleteClassModal } from '@/components/classes/complete-class-modal';
+import { MarkNotConductedModal } from '@/components/classes/mark-not-conducted-modal';
 import { CoachCard, CoachPage } from '@/components/coach/coach-page';
 import { OptionSheet, SelectField } from '@/components/student/option-sheet';
+import { useToast } from '@/components/ui/app-toast';
 import { Brand } from '@/constants/brand';
-import { DEMO_COACH_CLASS } from '@/constants/coach';
+import type { StudentFacingStatus } from '@/constants/coach-cancellation';
+import { useAuth } from '@/features/auth/session';
+import {
+  useMyClasses,
+  type ClassTab,
+  type ClassTypeFilter,
+  type DateFilter,
+} from '@/hooks/use-my-classes';
+import { api, ApiError, type ClassItem } from '@/services/api';
 
-const CLASS_TYPES = ['All classes', 'Demo classes', 'Regular classes'] as const;
-const DATE_OPTIONS = ['All time', 'Current month', 'Last month', 'Custom range'] as const;
-const TABS = ['Upcoming', 'Past', 'Cancelled'] as const;
-
-const STATS = [
-  { label: 'Total classes', value: '1' },
-  { label: 'Demo', value: '1' },
-  { label: 'Regular', value: '0' },
-  { label: 'Started on time', value: '0' },
-  { label: 'Started late', value: '0' },
-  { label: 'Never started', value: '1' },
-  { label: 'Students joined', value: '0' },
-];
+const CLASS_TYPES: ClassTypeFilter[] = ['All classes', 'Demo classes', 'Regular classes'];
+const DATE_OPTIONS: DateFilter[] = ['All time', 'Current month', 'Last month'];
+const TABS: ClassTab[] = ['Upcoming', 'Past', 'Cancelled'];
 
 type SheetKey = 'type' | 'date' | null;
 
+function canCompleteClass(item: ClassItem): boolean {
+  return item.status === 'unresolved' && (item.finalStatus === 'InProgress' || Boolean(item.isStarted));
+}
+
+function isCompleteTooEarly(item: ClassItem): boolean {
+  if (!item.completionAllowedAt) return false;
+  const allowedAt = new Date(item.completionAllowedAt).getTime();
+  return Number.isFinite(allowedAt) && Date.now() < allowedAt;
+}
+
 export default function CoachClassesScreen() {
-  const [classType, setClassType] = useState<string>(CLASS_TYPES[0]);
-  const [dateRange, setDateRange] = useState<string>(DATE_OPTIONS[0]);
-  const [tab, setTab] = useState<(typeof TABS)[number]>('Upcoming');
+  const { user } = useAuth();
+  const { showSuccess, showError } = useToast();
+  const [classType, setClassType] = useState<ClassTypeFilter>(CLASS_TYPES[0]);
+  const [dateRange, setDateRange] = useState<DateFilter>(DATE_OPTIONS[0]);
+  const [tab, setTab] = useState<ClassTab>('Upcoming');
   const [openSheet, setOpenSheet] = useState<SheetKey>(null);
 
-  const counts = { Upcoming: 1, Past: 0, Cancelled: 0 } as const;
+  const [notConductedItem, setNotConductedItem] = useState<ClassItem | null>(null);
+  const [notConductedSubmitting, setNotConductedSubmitting] = useState(false);
+  const [notConductedError, setNotConductedError] = useState<string | null>(null);
+
+  const [completeItem, setCompleteItem] = useState<ClassItem | null>(null);
+  const [completeSubmitting, setCompleteSubmitting] = useState(false);
+  const [completeError, setCompleteError] = useState<string | null>(null);
+  const [puzzleErrors, setPuzzleErrors] = useState<
+    { studentName: string; unsolvedCount: number }[]
+  >([]);
+
+  const { buckets, stats, loading, error, refresh } = useMyClasses(classType, dateRange);
+  const visible = buckets[tab];
 
   const sheet = useMemo(() => {
     if (openSheet === 'type') {
@@ -36,7 +63,7 @@ export default function CoachClassesScreen() {
         title: 'Filter by Class Type',
         options: [...CLASS_TYPES],
         selected: classType,
-        onSelect: setClassType,
+        onSelect: (value: string) => setClassType(value as ClassTypeFilter),
       };
     }
     if (openSheet === 'date') {
@@ -44,11 +71,126 @@ export default function CoachClassesScreen() {
         title: 'Filter by Date',
         options: [...DATE_OPTIONS],
         selected: dateRange,
-        onSelect: setDateRange,
+        onSelect: (value: string) => setDateRange(value as DateFilter),
       };
     }
     return null;
   }, [classType, dateRange, openSheet]);
+
+  const submitNotConducted = async (payload: {
+    internalReason: string;
+    studentFacingStatus: StudentFacingStatus;
+  }) => {
+    if (!user?.id || !notConductedItem || notConductedSubmitting) return;
+    setNotConductedSubmitting(true);
+    setNotConductedError(null);
+    try {
+      await api.coaches.markNotConducted(user.id, {
+        ...(notConductedItem.classSessionId
+          ? { classSessionId: notConductedItem.classSessionId }
+          : {}),
+        timingId: notConductedItem.timingId,
+        scheduledDate: notConductedItem.scheduledDate,
+        internalReason: payload.internalReason,
+        studentFacingStatus: payload.studentFacingStatus,
+      });
+      showSuccess('Class marked as not conducted.');
+      setNotConductedItem(null);
+      await refresh();
+    } catch (err) {
+      setNotConductedError(
+        err instanceof ApiError ? err.message : 'Failed to mark class as not conducted.',
+      );
+    } finally {
+      setNotConductedSubmitting(false);
+    }
+  };
+
+  const submitComplete = async (payload: { topic: string; notes: string }) => {
+    if (!user?.id || !completeItem || completeSubmitting) return;
+    setCompleteSubmitting(true);
+    setCompleteError(null);
+    setPuzzleErrors([]);
+    try {
+      await api.coaches.completeClass(user.id, {
+        ...(completeItem.classSessionId ? { classSessionId: completeItem.classSessionId } : {}),
+        timingId: completeItem.timingId,
+        scheduledDate: completeItem.scheduledDate,
+        topic: payload.topic,
+        notes: payload.notes,
+      });
+      showSuccess('Class completed.');
+      setCompleteItem(null);
+      await refresh();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const details = err.details as
+          | { code?: string; message?: string; students?: { studentName: string; unsolvedCount: number }[] }
+          | null
+          | undefined;
+        if (details?.code === 'insufficient_unsolved_puzzles') {
+          setCompleteError(details.message || err.message);
+          setPuzzleErrors(details.students || []);
+        } else {
+          setCompleteError(err.message);
+        }
+      } else {
+        setCompleteError('Failed to complete class.');
+      }
+    } finally {
+      setCompleteSubmitting(false);
+    }
+  };
+
+  const openComplete = (item: ClassItem) => {
+    if (isCompleteTooEarly(item) && item.completionAllowedAt) {
+      const when = new Date(item.completionAllowedAt).toLocaleString();
+      showError(`Complete Class is available after ${when}`);
+      return;
+    }
+    setCompleteError(null);
+    setPuzzleErrors([]);
+    setCompleteItem(item);
+  };
+
+  const renderFooter = (item: ClassItem) => {
+    if (tab === 'Upcoming') {
+      return <CoachUpcomingActions item={item} onChanged={refresh} />;
+    }
+
+    if (tab === 'Past' && item.status === 'unresolved') {
+      const showComplete = canCompleteClass(item);
+      return (
+        <View style={styles.closeoutActions}>
+          {showComplete ? (
+            <Pressable
+              onPress={() => openComplete(item)}
+              style={({ pressed }) => [
+                styles.completeAction,
+                pressed ? styles.pressed : null,
+                isCompleteTooEarly(item) ? styles.disabled : null,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Complete Class">
+              <Text style={styles.completeActionText}>Complete Class</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={() => {
+              setNotConductedError(null);
+              setNotConductedItem(item);
+            }}
+            style={({ pressed }) => [styles.notConductedAction, pressed ? styles.pressed : null]}
+            accessibilityRole="button"
+            accessibilityLabel="Mark as Not Conducted">
+            <Text style={styles.notConductedActionText}>Mark as Not Conducted</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    return undefined;
+  };
 
   return (
     <CoachPage
@@ -69,7 +211,7 @@ export default function CoachClassesScreen() {
 
       <CoachCard>
         <View style={styles.statsGrid}>
-          {STATS.map((stat) => (
+          {stats.map((stat) => (
             <View key={stat.label} style={styles.statItem}>
               <Text style={styles.statValue}>{stat.value}</Text>
               <Text style={styles.statLabel}>{stat.label}</Text>
@@ -89,36 +231,45 @@ export default function CoachClassesScreen() {
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}>
               <Text style={[styles.tabText, active ? styles.tabTextActive : null]}>
-                {item} ({counts[item]})
+                {item} ({buckets[item].length})
               </Text>
             </Pressable>
           );
         })}
       </View>
 
-      {tab === 'Upcoming' ? (
-        <CoachCard style={styles.classCard}>
-          <Text style={styles.date}>{DEMO_COACH_CLASS.dateLabel}</Text>
-          <Text style={styles.time}>{DEMO_COACH_CLASS.timeLabel}</Text>
-          <View style={styles.batchRow}>
-            <Text style={styles.batch}>{DEMO_COACH_CLASS.batchLabel}</Text>
-            <View style={styles.demoTag}>
-              <Text style={styles.demoText}>Demo</Text>
-            </View>
-          </View>
-          <Text style={styles.student}>{DEMO_COACH_CLASS.studentName}</Text>
-          <View style={styles.statusPill}>
-            <Text style={styles.statusText}>{DEMO_COACH_CLASS.status}</Text>
-          </View>
-          <Pressable style={styles.actionButton} accessibilityRole="button">
-            <Text style={styles.actionText}>Mark as Not Conducted</Text>
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={Brand.gold} />
+          <Text style={styles.centerText}>Loading classes…</Text>
+        </View>
+      ) : null}
+
+      {!loading && error ? (
+        <View style={styles.center}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Pressable onPress={() => void refresh()} style={styles.retry} accessibilityRole="button">
+            <Text style={styles.retryText}>Try again</Text>
           </Pressable>
-        </CoachCard>
-      ) : (
+        </View>
+      ) : null}
+
+      {!loading && !error && visible.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>No classes found for this section.</Text>
         </View>
-      )}
+      ) : null}
+
+      {!loading && !error
+        ? visible.map((item) => (
+            <ClassSessionCard
+              key={`${item.id}-${item.scheduledDate}`}
+              item={item}
+              perspective="coach"
+              footer={renderFooter(item)}
+            />
+          ))
+        : null}
 
       {sheet ? (
         <OptionSheet
@@ -130,6 +281,34 @@ export default function CoachClassesScreen() {
           onClose={() => setOpenSheet(null)}
         />
       ) : null}
+
+      <MarkNotConductedModal
+        visible={Boolean(notConductedItem)}
+        item={notConductedItem}
+        submitting={notConductedSubmitting}
+        error={notConductedError}
+        onClose={() => {
+          if (notConductedSubmitting) return;
+          setNotConductedItem(null);
+          setNotConductedError(null);
+        }}
+        onSubmit={(payload) => void submitNotConducted(payload)}
+      />
+
+      <CompleteClassModal
+        visible={Boolean(completeItem)}
+        item={completeItem}
+        submitting={completeSubmitting}
+        error={completeError}
+        puzzleErrors={puzzleErrors}
+        onClose={() => {
+          if (completeSubmitting) return;
+          setCompleteItem(null);
+          setCompleteError(null);
+          setPuzzleErrors([]);
+        }}
+        onSubmit={(payload) => void submitComplete(payload)}
+      />
     </CoachPage>
   );
 }
@@ -144,7 +323,8 @@ const styles = StyleSheet.create({
   },
   statItem: {
     width: '50%',
-    paddingVertical: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
     gap: 2,
   },
   statValue: {
@@ -166,13 +346,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: Brand.white,
     borderWidth: 1,
     borderColor: Brand.border,
-    backgroundColor: Brand.white,
   },
   tabActive: {
-    borderColor: Brand.gold,
     backgroundColor: '#FFF8E7',
+    borderColor: Brand.gold,
   },
   tabText: {
     color: Brand.subtitle,
@@ -183,77 +363,84 @@ const styles = StyleSheet.create({
     color: Brand.navy,
     fontWeight: '800',
   },
-  classCard: {
-    gap: 8,
+  center: {
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 24,
   },
-  date: {
+  centerText: {
+    color: Brand.subtitle,
+    fontSize: 13,
+  },
+  errorText: {
+    color: Brand.error,
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  retry: {
+    minHeight: 40,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Brand.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryText: {
     color: Brand.navy,
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '700',
   },
-  time: {
+  empty: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: Brand.border,
+    borderRadius: 14,
+    paddingVertical: 28,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    backgroundColor: Brand.inputBackground,
+  },
+  emptyText: {
     color: Brand.subtitle,
     fontSize: 14,
+    textAlign: 'center',
   },
-  batchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  closeoutActions: {
     gap: 8,
   },
-  batch: {
-    color: Brand.navy,
-    fontWeight: '600',
+  completeAction: {
+    minHeight: 42,
+    borderRadius: 12,
+    backgroundColor: Brand.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
   },
-  demoTag: {
-    borderRadius: 999,
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  completeActionText: {
+    color: Brand.white,
+    fontSize: 14,
+    fontWeight: '800',
   },
-  demoText: {
-    color: Brand.navy,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  student: {
-    color: Brand.navy,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  statusPill: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  statusText: {
-    color: Brand.navy,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  actionButton: {
-    marginTop: 4,
-    minHeight: 44,
+  notConductedAction: {
+    minHeight: 42,
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: Brand.gold,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: Brand.white,
+    paddingHorizontal: 12,
   },
-  actionText: {
+  notConductedActionText: {
     color: Brand.navy,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
   },
-  empty: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: Brand.border,
-    padding: 24,
-    alignItems: 'center',
+  pressed: {
+    opacity: 0.9,
   },
-  emptyText: {
-    color: Brand.subtitle,
+  disabled: {
+    opacity: 0.5,
   },
 });
